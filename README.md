@@ -7,16 +7,18 @@ This is a quick overview of the code I used during the [Kaggle](https://kaggle.c
 The recent [Kaggle](https://kaggle.com) [Ultrasound Nerve Segmentation](https://www.kaggle.com/c/ultrasound-nerve-segmentation) competition provided a chance to apply computer vision in the medical field by identifying nerve structures in ultrasound images. 
 
 An example image:
+
 ![png](data/train/images/1_1.png) 
 
 and it's corresponding mask:
+
 ![png](data/train/masks/1_1_mask.png)
 
 ### Objective
 The goal is to train a model that not only detects the nerve structure, but provides a *segmentation* identifying all pixel locations containing the nerve.
 
 ### Data
-Obviously each ultrasound is actually video. We're given frames from ultrasounds, taken from 47 anonymous patients. For each of the 5.635 training frames given, a mask frame is provided showing the location of the nerve within the frame, if any exists.
+Obviously each ultrasound is actually video. We're given frames from ultrasounds, taken from 47 anonymous patients. For each of the 5,635 training frames given, a mask frame is provided showing the location of the nerve within the frame, if any exists.
 
 To train the model, I used extensive data augmentation including random cropping, elastic transformations consistent with (Ronneberger, Fischer,  Brox, 2015), and vertical and horizontal flips. For each image, the same exact transformation was also applied to the labels. 
 
