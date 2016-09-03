@@ -28,6 +28,7 @@ function DataLoader:__init(opt)
     self.trainData = opt.trainData
     self.testData = opt.testData
     self.opt = opt
+    self.validOnly = opt.validOnly or false
 
     self:Setup(opt)
 
@@ -59,7 +60,7 @@ function DataLoader:Setup(opt)
                 if patientNumber%5 == cvParam then
                     self.valImages[#self.valImages+1] = v[j]
                     self.valMasks[#self.valMasks+1] = masks[j]:add(1)
-                else
+                elseif not self.validOnly then
                     self.trainImages[#self.trainImages+1] = v[j]
                     self.trainMasks[#self.trainMasks+1] = masks[j]:add(1)
                 end
@@ -104,19 +105,21 @@ function GetTransforms(mode)
 end
 
 --- Returns transform function used for training
-function GetTrainTransforms()
+function GetTrainTransforms(ts)
     local f = function(sample)
         local images = sample.input
         local labels = sample.target
-        local transforms = t.Compose{
+        ts = ts or {
             t.OneHotLabel(2),
+            --t.Rotation(15),
+            t.RandomCrop(math.min(3 * imgWidth, trueWidth, trueHeight)),
             t.Resize(imgWidth, imgHeight),
             t.HorizontalFlip(0.5),
-            t.Rotation(5),
             t.VerticalFlip(0.5),
-            t.ElasticTransform(100,20),
+            t.ElasticTransform(200,20),
             t.CatLabel()
         }
+        local transforms = t.Compose(ts)
         local imagesTransformed = torch.Tensor(images:size(1),1,imgHeight,imgWidth)
         local masksTransformed = torch.Tensor(images:size(1),imgHeight,imgWidth)
         for i=1,images:size(1) do
@@ -136,6 +139,7 @@ function GetValTransforms()
         local labels = sample.target
         local transforms = t.Compose{
             t.OneHotLabel(2),
+            t.CenterCrop(math.min(3 * imgWidth, trueWidth, trueHeight)),
             t.Resize(imgWidth, imgHeight),
             t.CatLabel()
         }

@@ -13,7 +13,8 @@ require 'optim'
 require 'nn'
 require 'cunn'
 require 'cudnn'
-require 'utils/utils.lua'
+require 'utils/utils'
+require 'gnuplot'
 tnt = require 'torchnet'
 
 local Machine = torch.class 'Machine'
@@ -39,10 +40,12 @@ function Machine:__init(opt)
    self.maxepoch = opt.maxepoch -- maximum number of epochs for training
    self.dataset = opt.dataset -- name of the base file used for training
    self.learningalgo = opt.optimMethod -- name of the learning algorithm used
+   self.initialLearningRate = opt.learningRate
 
    self.meters = self:LoadMeters(opt) -- table of meters, key is the name of meter and value is the meter
    self:attachHooks(opt)
    self:setupEngine(opt)
+   self.plotdata = self:initPlotData()
 end
 
 --- Loads the model
@@ -105,6 +108,59 @@ function Machine:PrintMeters()
    end
 end
 
+function Machine:initPlotData()
+   local plot_data = {}
+   plot_data['Epochs'] = {}
+   plot_data['Validation Loss'] = {}
+   plot_data['Training Loss'] = {}
+   plot_data['valid_dice'] = {}
+   plot_data['train_dice'] = {}
+
+   return plot_data
+end
+
+function Machine:plotOnEndEpochHook(state)
+
+   local data = {}
+   for i,v in pairs(self.meters) do
+      data[i] = v:value()
+   end
+
+   if data['Validation Loss'] > .8 then
+      return
+   end
+
+   table.insert(self.plotdata['Epochs'], state.epoch)
+   table.insert(self.plotdata['Validation Loss'], data['Validation Loss'])
+   table.insert(self.plotdata['Training Loss'], data['Training Loss'])
+   table.insert(self.plotdata['valid_dice'], data['Validation Dice Score'])
+   table.insert(self.plotdata['train_dice'], data['Training Dice Score'])
+   
+
+   epochs = torch.Tensor(self.plotdata['Epochs'])
+   training_loss = torch.Tensor(self.plotdata['Training Loss'])
+   validation_loss = torch.Tensor(self.plotdata['Validation Loss'])
+   train_dice = torch.Tensor(self.plotdata['train_dice'])
+   valid_dice = torch.Tensor(self.plotdata['valid_dice'])
+
+   gnuplot.figure(1)
+   gnuplot.plot(
+      {"Training Loss", epochs, training_loss, '-'},
+      {"Validation Loss", epochs, validation_loss, '-'}
+   )
+   gnuplot.xlabel('Epochs')
+   gnuplot.title("Losses")
+
+   gnuplot.figure(2)
+   gnuplot.plot(
+      {"Training Dice Score", epochs, train_dice, '-'},
+      {"Validation Dice Score", epochs, valid_dice, '-'}
+   )
+   gnuplot.xlabel('Epochs')
+   gnuplot.title("Dice Scores")
+
+end
+
 --- Trains the model
 function Machine:train(opt)
    self.engine:train{
@@ -128,7 +184,7 @@ end
 
 --- Given the state, it will save the model as ModelName_DatasetName_LearningAlgorithm_epoch_torchnet_EpochNum.t7
 function Machine:saveModels(state)
-   local savePath = paths.concat(self.savePath,('%s_%s_%s_epoch_torchnet_%d.t7'):format(self.modelName,self.dataset,self.learningalgo,state.epoch))
+   local savePath = paths.concat(self.savePath,('%s_%s_%s(%.4f)_epoch_torchnet_%d.t7'):format(self.modelName,self.dataset,self.learningalgo,self.initialLearningRate,state.epoch))
    torch.save(savePath,state.network:clearState())
 end
 
@@ -148,7 +204,11 @@ function Machine:attachHooks(opt)
       if self.learningalgo == 'sgd' then
          state.optim.learningRate = self:LearningRateScheduler(state,state.epoch+1)
       end
-      print(("Epoch : %d, Learning Rate : %.5f "):format(state.epoch+1,state.optim.learningRate or state.config.learningRate))
+      dofile('threshold.lua')
+      print(("Epoch : %d, Learning Rate : %.5f SegmentationProb : %.2f"):format(
+         state.epoch+1,
+         state.optim.learningRate or state.config.learningRate,
+         baseSegmentationProb))
       self:ResetMeters()
    end
 
@@ -195,6 +255,8 @@ function Machine:attachHooks(opt)
       self:test()
       self:PrintMeters()
       self:saveModels(state)
+      self:plotOnEndEpochHook(state)
+
    end
 
    local onEndHook = function(state)
@@ -217,12 +279,13 @@ end
 -- @param state State of the training
 -- @param epoch Current epoch number
 -- @return Learning Rate
--- Training scheduler that reduces learning by factor of 10 rate after every 40 epochs
+-- Training scheduler that reduces learning linearly as the epoch approaches the max epoch
 function Machine:LearningRateScheduler(state,epoch)
-    local decay = 0
-    local step = 1
-    decay = math.ceil((epoch - 1) / 40)
-    return math.pow(0.1, decay)
+    --local decay = 0
+    --local step = 1
+    --decay = math.ceil((epoch - 1) / 40)
+    --return math.pow(0.1, decay)
+    return state.config.learningRate * (1. - (epoch - 1.) / self.maxepoch)
 end
 
 --- Sets up the optim engine based on parameter received
@@ -231,7 +294,7 @@ function Machine:setupEngine(opt)
    if opt.optimMethod=='sgd' then
       self.optimMethod = optim.sgd
       self.optimConfig = {
-         learningRate = 0.1,
+         learningRate = self.initialLearningRate,
          momentum = 0.9,
          nesterov = true,
          weightDecay = 0.0001,
@@ -240,7 +303,7 @@ function Machine:setupEngine(opt)
    elseif opt.optimMethod=='adam' then
       self.optimMethod = optim.adam
       self.optimConfig = {
-         learningRate = 0.1
+         learningRate =self.initialLearningRate
       }
    end
 end
@@ -259,6 +322,7 @@ function getIterator(mode,ds,batchSize)
          tnt = require 'torchnet'
       end,
       closure = function()
+         ds:resample()
          return tnt.BatchDataset{
             batchsize = batchSize,
             dataset = ds
